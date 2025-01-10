@@ -28,6 +28,6 @@ jobs:
       - uses: DeterminateSystems/magic-nix-cache-action@main
 
       - name: Run goreleaser
-        run: nix develop --command -- goreleaser release .fyve.goreleaser.yml --clean
+        run: nix develop --command -- goreleaser release --config .fyve.goreleaser.yml --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
