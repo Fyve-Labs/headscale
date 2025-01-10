@@ -118,6 +118,7 @@ func tailNode(
 		tailcfg.CapabilityFileSharing: []tailcfg.RawMessage{},
 		tailcfg.CapabilityAdmin:       []tailcfg.RawMessage{},
 		tailcfg.CapabilitySSH:         []tailcfg.RawMessage{},
+		tailcfg.CapabilityHTTPS:       []tailcfg.RawMessage{},
 	}
 
 	if cfg.RandomizeClientPort {
