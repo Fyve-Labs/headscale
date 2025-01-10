@@ -52,25 +52,16 @@ kos:
       - linux/amd64
     tags:
       - "{{ if not .Prerelease }}latest{{ end }}"
-      - "{{ if not .Prerelease }}{{ .Major }}.{{ .Minor }}.{{ .Patch }}{{ end }}"
-      - "{{ if not .Prerelease }}{{ .Major }}.{{ .Minor }}{{ end }}"
-      - "{{ if not .Prerelease }}{{ .Major }}{{ end }}"
-      - "{{ if not .Prerelease }}v{{ .Major }}.{{ .Minor }}.{{ .Patch }}{{ end }}"
-      - "{{ if not .Prerelease }}v{{ .Major }}.{{ .Minor }}{{ end }}"
-      - "{{ if not .Prerelease }}v{{ .Major }}{{ end }}"
-      - "{{ if not .Prerelease }}stable{{ else }}unstable{{ end }}"
-      - "{{ .Tag }}"
-      - '{{ trimprefix .Tag "v" }}'
       - "sha-{{ .ShortCommit }}"
 
 
 checksum:
   name_template: "checksums.txt"
-snapshot:
-  version_template: "{{ .Tag }}-next"
-changelog:
-  sort: asc
-  filters:
-    exclude:
-      - "^docs:"
-      - "^test:"
+#snapshot:
+#  version_template: "{{ .Tag }}-next"
+#changelog:
+#  sort: asc
+#  filters:
+#    exclude:
+#      - "^docs:"
+#      - "^test:"
