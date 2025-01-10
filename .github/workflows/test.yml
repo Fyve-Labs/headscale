@@ -8,6 +8,7 @@ concurrency:
 
 jobs:
   test:
+    if: github.repository == 'juanfont/headscale'
     runs-on: ubuntu-latest
 
     steps:
