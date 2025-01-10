@@ -51,17 +51,18 @@ kos:
     platforms:
       - linux/amd64
     tags:
+      - "{{ .Tag }}"
       - "{{ if not .Prerelease }}latest{{ end }}"
       - "sha-{{ .ShortCommit }}"
 
 
 checksum:
   name_template: "checksums.txt"
-#snapshot:
-#  version_template: "{{ .Tag }}-next"
-#changelog:
-#  sort: asc
-#  filters:
-#    exclude:
-#      - "^docs:"
-#      - "^test:"
+snapshot:
+  version_template: "{{ .Tag }}-next"
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
