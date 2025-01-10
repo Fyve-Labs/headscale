@@ -1,5 +1,5 @@
 ---
-name: Release
+name: Fyve release
 
 on:
   push:
