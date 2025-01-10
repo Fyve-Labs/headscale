@@ -3,8 +3,10 @@ name: Release
 
 on:
   push:
-    branches:
-      - fyve-updates
+    tags:
+      - "*" # triggers only if push new tag version
+#    branches:
+#      - fyve-updates
   workflow_dispatch:
 
 jobs:
@@ -28,6 +30,6 @@ jobs:
       - uses: DeterminateSystems/magic-nix-cache-action@main
 
       - name: Run goreleaser
-        run: nix develop --command -- goreleaser release --config .fyve.goreleaser.yml --clean --snapshot
+        run: nix develop --command -- goreleaser release --config .fyve.goreleaser.yml --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
