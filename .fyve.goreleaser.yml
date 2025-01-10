@@ -20,7 +20,7 @@ builds:
     flags:
       - -mod=readonly
     ldflags:
-      - -s -w -X github.com/Fyve-Labs/headscale/cmd/headscale/cli.Version=v{{.Version}}
+      - -s -w -X github.com/juanfont/headscale/cmd/headscale/cli.Version=v{{.Version}}
     tags:
       - ts2019
 
@@ -38,7 +38,7 @@ source:
 
 kos:
   - id: ghcr
-    repository: ghcr.io/Fyve-Labs/headscale
+    repository: ghcr.io/fyve-labs/headscale
 
     # bare tells KO to only use the repository
     # for tagging and naming the container.
