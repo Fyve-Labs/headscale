@@ -265,7 +265,7 @@ func (ns *noiseServer) NoiseSetDnsHandler(
 		Msg("SetDNSHandler called")
 
 	ctx := req.Context()
-	domain := viper.GetString("duckdns.domain")
+	domain := viper.GetString("dns.base_domain")
 	zone := domain + "."
 	provider := duckdns.Provider{APIToken: viper.GetString("duckdns.api_token")}
 
