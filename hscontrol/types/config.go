@@ -242,6 +242,17 @@ func validatePKCEMethod(method string) error {
 	return nil
 }
 
+// Domain returns the hostname/domain part of the ServerURL.
+// If the ServerURL is not a valid URL, it returns the BaseDomain.
+func (c *Config) Domain() string {
+	u, err := url.Parse(c.ServerURL)
+	if err != nil {
+		return c.BaseDomain
+	}
+
+	return u.Hostname()
+}
+
 // LoadConfig prepares and loads the Headscale configuration into Viper.
 // This means it sets the default values, reads the configuration file and
 // environment variables, and handles deprecated configuration options.
@@ -308,7 +319,7 @@ func LoadConfig(path string, isFile bool) error {
 	viper.SetDefault("oidc.only_start_if_oidc_is_available", true)
 	viper.SetDefault("oidc.expiry", "180d")
 	viper.SetDefault("oidc.use_expiry_from_token", false)
-	viper.SetDefault("oidc.map_legacy_users", true)
+	viper.SetDefault("oidc.map_legacy_users", false)
 	viper.SetDefault("oidc.pkce.enabled", false)
 	viper.SetDefault("oidc.pkce.method", "S256")
 

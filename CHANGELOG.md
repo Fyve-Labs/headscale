@@ -2,7 +2,12 @@
 
 ## Next
 
-## 0.24.0 (2024-xx-xx)
+### Changes
+
+- `oidc.map_legacy_users` is now `false` by default
+  [#2350](https://github.com/juanfont/headscale/pull/2350)
+
+## 0.24.0 (2025-01-17)
 
 ### Security fix: OIDC changes in Headscale 0.24.0
 
