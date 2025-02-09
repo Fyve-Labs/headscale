@@ -19,6 +19,7 @@ require (
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.24.0
 	github.com/jagottsicher/termcolor v1.0.2
 	github.com/klauspost/compress v1.17.11
+	github.com/libdns/cloudflare v0.1.1
 	github.com/libdns/duckdns v0.2.0
 	github.com/libdns/libdns v0.2.2
 	github.com/oauth2-proxy/mockoidc v0.0.0-20240214162133-caebfff84d25

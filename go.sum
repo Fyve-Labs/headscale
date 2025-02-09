@@ -318,6 +318,8 @@ github.com/ledongthuc/pdf v0.0.0-20220302134840-0c2507a12d80/go.mod h1:imJHygn/1
 github.com/lib/pq v1.8.0/go.mod h1:AlVN5x4E4T544tWzH6hKfbfQvm3HdbOxrmggDNAPY9o=
 github.com/lib/pq v1.10.9 h1:YXG7RB+JIjhP29X+OtkiDnYaXQwpS4JEWq7dtCCRUEw=
 github.com/lib/pq v1.10.9/go.mod h1:AlVN5x4E4T544tWzH6hKfbfQvm3HdbOxrmggDNAPY9o=
+github.com/libdns/cloudflare v0.1.1 h1:FVPfWwP8zZCqj268LZjmkDleXlHPlFU9KC4OJ3yn054=
+github.com/libdns/cloudflare v0.1.1/go.mod h1:9VK91idpOjg6v7/WbjkEW49bSCxj00ALesIFDhJ8PBU=
 github.com/libdns/duckdns v0.2.0 h1:vd3pE09G2qTx1Zh1o3LmrivWSByD3Z5FbL7csX5vDgE=
 github.com/libdns/duckdns v0.2.0/go.mod h1:jCQ/7+qvhLK39+28qXvKEYGBBvmHBCmIwNqdJTCUmVs=
 github.com/libdns/libdns v0.2.0/go.mod h1:yQCXzk1lEZmmCPa857bnk4TsOiqYasqpyOEeSObbb40=

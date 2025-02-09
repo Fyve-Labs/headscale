@@ -3,9 +3,6 @@ package hscontrol
 import (
 	"encoding/binary"
 	"encoding/json"
-	"fmt"
-	"github.com/libdns/libdns"
-	"github.com/spf13/viper"
 	"io"
 	"net/http"
 	"tailscale.com/tailcfg"
@@ -13,7 +10,6 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/juanfont/headscale/hscontrol/types"
-	"github.com/libdns/duckdns"
 	"github.com/rs/zerolog/log"
 	"golang.org/x/net/http2"
 	"tailscale.com/control/controlbase"
@@ -235,95 +231,5 @@ func (ns *noiseServer) NoisePollNetMapHandler(
 		sess.serve()
 	} else {
 		sess.serveLongPoll()
-	}
-}
-
-func (ns *noiseServer) NoiseSetDnsHandler(
-	writer http.ResponseWriter,
-	req *http.Request,
-) {
-	body, _ := io.ReadAll(req.Body)
-	setDnsRequest := tailcfg.SetDNSRequest{}
-	if err := json.Unmarshal(body, &setDnsRequest); err != nil {
-		log.Error().
-			Caller().
-			Err(err).
-			Msg("Cannot parse SetDNSRequest")
-		http.Error(writer, "Internal error", http.StatusInternalServerError)
-
-		return
-	}
-
-	log.Info().
-		Caller().
-		Str("handler", "NoiseSetDnsHandler").
-		Any("headers", req.Header).
-		Str("NodeKey", setDnsRequest.NodeKey.ShortString()).
-		Str("Name", setDnsRequest.Name).
-		Str("Type", setDnsRequest.Type).
-		Str("Value", setDnsRequest.Value).
-		Msg("SetDNSHandler called")
-
-	ctx := req.Context()
-	domain := viper.GetString("dns.base_domain")
-	zone := domain + "."
-	provider := duckdns.Provider{APIToken: viper.GetString("duckdns.api_token")}
-
-	// list records
-	recs, err := provider.GetRecords(ctx, zone)
-	if err != nil {
-		log.Error().
-			Caller().
-			Err(err).
-			Msg("Could not retrieve dns records for: " + domain)
-		http.Error(writer, "Internal server error", http.StatusInternalServerError)
-		return
-	}
-
-	var hasSet = false
-	for _, re := range recs {
-		if re.Value == setDnsRequest.Value {
-			hasSet = true
-		}
-
-		if re.Name == setDnsRequest.Name {
-			hasSet = true
-		}
-
-		log.Info().Msg(fmt.Sprintf("%s %s %s", re.Type, re.Name, re.Value))
-	}
-
-	if !hasSet {
-		newRecs, err := provider.AppendRecords(ctx, zone, []libdns.Record{
-			{
-				Type:  setDnsRequest.Type,
-				Name:  setDnsRequest.Name,
-				Value: setDnsRequest.Value,
-			},
-		})
-
-		if err != nil {
-			log.Error().
-				Caller().
-				Err(err).
-				Msg("Can not set dns records")
-			http.Error(writer, "Internal server error", http.StatusInternalServerError)
-			return
-		}
-
-		for _, re := range newRecs {
-			log.Info().Msg(fmt.Sprintf("New %s record set: %s", re.Type, re.Name))
-		}
-	}
-
-	resp := tailcfg.SetDNSResponse{}
-	respBody, _ := json.Marshal(resp)
-	writer.Header().Set("Content-Type", "application/json; charset=utf-8")
-	_, err = writer.Write(respBody)
-	if err != nil {
-		log.Error().
-			Caller().
-			Err(err).
-			Msg("Failed to write response")
 	}
 }
