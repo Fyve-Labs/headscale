@@ -1,9 +1,7 @@
 package hscontrol
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"github.com/libdns/cloudflare"
 	"github.com/libdns/duckdns"
@@ -12,6 +10,7 @@ import (
 	"github.com/spf13/viper"
 	"io"
 	"net/http"
+	"strings"
 	"tailscale.com/tailcfg"
 )
 
@@ -54,6 +53,7 @@ func (ns *noiseServer) NoiseSetDnsHandler(
 	}
 
 	if viper.GetString("cloudflare.api_token") != "" {
+		zone = subdomainToDomain(domain)
 		provider = &cloudflare.Provider{APIToken: viper.GetString("cloudflare.api_token")}
 	}
 
@@ -77,12 +77,13 @@ func (ns *noiseServer) NoiseSetDnsHandler(
 	}
 
 	var hasSet = false
+	relativeName := libdns.RelativeName(setDnsRequest.Name, zone)
 	for _, re := range recs {
-		if re.Value == setDnsRequest.Value {
+		if re.Name == relativeName {
 			hasSet = true
 		}
 
-		if re.Name == setDnsRequest.Name {
+		if re.Value == setDnsRequest.Value {
 			hasSet = true
 		}
 
@@ -124,18 +125,12 @@ func (ns *noiseServer) NoiseSetDnsHandler(
 	}
 }
 
-func libdnsGetRecords(provider interface{}, ctx context.Context, zone string) ([]libdns.Record, error) {
-	if p, ok := provider.(libdns.RecordGetter); ok {
-		return p.GetRecords(ctx, zone)
+func subdomainToDomain(subdomain string) string {
+	split := strings.Split(subdomain, ".")
+	if len(split) > 2 {
+		zoneParts := split[len(split)-2:]
+		return strings.Join(zoneParts, ".")
 	}
 
-	return nil, errors.New("invalid libdns provider")
-}
-
-func libdnsAppendRecords(provider interface{}, ctx context.Context, zone string, recs []libdns.Record) ([]libdns.Record, error) {
-	if p, ok := provider.(libdns.RecordAppender); ok {
-		return p.AppendRecords(ctx, zone, recs)
-	}
-
-	return nil, errors.New("invalid libdns provider")
+	return subdomain
 }
