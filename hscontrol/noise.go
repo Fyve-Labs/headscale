@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"tailscale.com/tailcfg"
+	"tailscale.com/types/key"
 
 	"github.com/gorilla/mux"
 	"github.com/juanfont/headscale/hscontrol/capver"
@@ -16,8 +18,6 @@ import (
 	"gorm.io/gorm"
 	"tailscale.com/control/controlbase"
 	"tailscale.com/control/controlhttp/controlhttpserver"
-	"tailscale.com/tailcfg"
-	"tailscale.com/types/key"
 )
 
 const (
@@ -101,6 +101,7 @@ func (h *Headscale) NoiseUpgradeHandler(
 	router.HandleFunc("/machine/register", noiseServer.NoiseRegistrationHandler).
 		Methods(http.MethodPost)
 	router.HandleFunc("/machine/map", noiseServer.NoisePollNetMapHandler)
+	router.HandleFunc("/machine/set-dns", noiseServer.NoiseSetDnsHandler)
 
 	noiseServer.httpBaseConfig = &http.Server{
 		Handler:           router,
