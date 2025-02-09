@@ -14,6 +14,12 @@ import (
 	"tailscale.com/tailcfg"
 )
 
+var provider interface {
+	libdns.RecordGetter
+	libdns.RecordAppender
+	libdns.RecordSetter
+}
+
 func (ns *noiseServer) NoiseSetDnsHandler(
 	writer http.ResponseWriter,
 	req *http.Request,
@@ -43,10 +49,7 @@ func (ns *noiseServer) NoiseSetDnsHandler(
 	ctx := req.Context()
 	domain := viper.GetString("dns.base_domain")
 	zone := domain
-	var provider interface {
-		libdns.RecordGetter
-		libdns.RecordAppender
-	}
+	txt := setDnsRequest.Value
 
 	if viper.GetString("duckdns.api_token") != "" {
 		provider = &duckdns.Provider{APIToken: viper.GetString("duckdns.api_token")}
@@ -54,6 +57,7 @@ func (ns *noiseServer) NoiseSetDnsHandler(
 
 	if viper.GetString("cloudflare.api_token") != "" {
 		zone = subdomainToDomain(domain)
+		txt = fmt.Sprintf("\"%s\"", setDnsRequest.Value)
 		provider = &cloudflare.Provider{APIToken: viper.GetString("cloudflare.api_token")}
 	}
 
@@ -63,6 +67,14 @@ func (ns *noiseServer) NoiseSetDnsHandler(
 			Msg("no dns provider setup")
 		http.Error(writer, "Internal error", http.StatusInternalServerError)
 		return
+	}
+
+	records := []libdns.Record{
+		{
+			Type:  setDnsRequest.Type,
+			Name:  setDnsRequest.Name,
+			Value: txt,
+		},
 	}
 
 	// list records
@@ -76,40 +88,44 @@ func (ns *noiseServer) NoiseSetDnsHandler(
 		return
 	}
 
-	var hasSet = false
+	var recordExists = false
 	relativeName := libdns.RelativeName(setDnsRequest.Name, zone)
 	for _, re := range recs {
 		if re.Name == relativeName {
-			hasSet = true
+			recordExists = true
 		}
 
-		if re.Value == setDnsRequest.Value {
-			hasSet = true
-		}
-
-		log.Info().Msg(fmt.Sprintf("%s %s %s", re.Type, re.Name, re.Value))
+		log.Info().Msg(fmt.Sprintf("%s %s", re.Type, re.Name))
 	}
 
-	if !hasSet {
-		newRecs, err := provider.AppendRecords(ctx, zone, []libdns.Record{
-			{
-				Type:  setDnsRequest.Type,
-				Name:  setDnsRequest.Name,
-				Value: setDnsRequest.Value,
-			},
-		})
-
+	if recordExists {
+		log.Info().Msg(fmt.Sprintf("Record existed, overridding: %s", setDnsRequest.Name))
+		setRecs, err := provider.SetRecords(ctx, zone, records)
 		if err != nil {
 			log.Error().
 				Caller().
 				Err(err).
-				Msg("Can not set dns records")
+				Msg("Update TXT record error")
+			http.Error(writer, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+		for _, re := range setRecs {
+			log.Info().Msg(fmt.Sprintf("Updated record: %s", re.Name))
+		}
+
+	} else {
+		newRecs, err := provider.AppendRecords(ctx, zone, records)
+		if err != nil {
+			log.Error().
+				Caller().
+				Err(err).
+				Msg("Add TXT record error")
 			http.Error(writer, "Internal server error", http.StatusInternalServerError)
 			return
 		}
 
 		for _, re := range newRecs {
-			log.Info().Msg(fmt.Sprintf("New %s record set: %s", re.Type, re.Name))
+			log.Info().Msg(fmt.Sprintf("Added new %s record set: %s", re.Type, re.Name))
 		}
 	}
 
