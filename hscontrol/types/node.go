@@ -77,9 +77,12 @@ type Node struct {
 
 	ForcedTags []string `gorm:"serializer:json"`
 
-	// TODO(kradalby): This seems like irrelevant information?
-	AuthKeyID *uint64     `sql:"DEFAULT:NULL"`
-	AuthKey   *PreAuthKey `gorm:"constraint:OnDelete:SET NULL;"`
+	// When a node has been created with a PreAuthKey, we need to
+	// prevent the preauthkey from being deleted before the node.
+	// The preauthkey can define "tags" of the node so we need it
+	// around.
+	AuthKeyID *uint64 `sql:"DEFAULT:NULL"`
+	AuthKey   *PreAuthKey
 
 	LastSeen *time.Time
 	Expiry   *time.Time
@@ -105,7 +108,7 @@ func (node *Node) GivenNameHasBeenChanged() bool {
 // IsExpired returns whether the node registration has expired.
 func (node Node) IsExpired() bool {
 	// If Expiry is not set, the client has not indicated that
-	// it wants an expiry time, it is therefor considered
+	// it wants an expiry time, it is therefore considered
 	// to mean "not expired"
 	if node.Expiry == nil || node.Expiry.IsZero() {
 		return false
@@ -180,7 +183,7 @@ func (node *Node) CanAccess(filter []tailcfg.FilterRule, node2 *Node) bool {
 	src := node.IPs()
 	allowedIPs := node2.IPs()
 
-	// TODO(kradalby): Regenerate this everytime the filter change, instead of
+	// TODO(kradalby): Regenerate this every time the filter change, instead of
 	// every time we use it.
 	matchers := make([]matcher.Match, len(filter))
 	for i, rule := range filter {

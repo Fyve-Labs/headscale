@@ -2,7 +2,83 @@
 
 ## Next
 
-## 0.24.0 (2024-xx-xx)
+
+### Changes
+
+- `oidc.map_legacy_users` and `oidc.strip_email_domain` has been removed
+  [#2411](https://github.com/juanfont/headscale/pull/2411)
+
+
+## 0.25.0 (2025-02-xx)
+
+### BREAKING
+
+- Authentication flow has been rewritten
+  [#2374](https://github.com/juanfont/headscale/pull/2374) This change should be
+  transparent to users with the exception of some buxfixes that has been
+  discovered and was fixed as part of the rewrite.
+  - When a node is registered with _a new user_, it will be registered as a new
+    node ([#2327](https://github.com/juanfont/headscale/issues/2327) and
+    [#1310](https://github.com/juanfont/headscale/issues/1310)).
+  - A logged out node logging in with the same user will replace the existing
+    node.
+- Remove support for Tailscale clients older than 1.62 (Capability version 87)
+      [#2405](https://github.com/juanfont/headscale/pull/2405)
+
+### Changes
+
+- `oidc.map_legacy_users` is now `false` by default
+  [#2350](https://github.com/juanfont/headscale/pull/2350)
+- Print Tailscale version instead of capability versions for outdated nodes
+  [#2391](https://github.com/juanfont/headscale/pull/2391)
+- Do not allow renaming of users from OIDC
+  [#2393](https://github.com/juanfont/headscale/pull/2393)
+- Change minimum hostname length to 2
+  [#2393](https://github.com/juanfont/headscale/pull/2393)
+- Fix migration error caused by nodes having invalid auth keys
+  [#2412](https://github.com/juanfont/headscale/pull/2412)
+- Pre auth keys belonging to a user are no longer deleted with the user
+  [#2396](https://github.com/juanfont/headscale/pull/2396)
+- Pre auth keys that are used by a node can no longer be deleted
+  [#2396](https://github.com/juanfont/headscale/pull/2396)
+- Rehaul HTTP errors, return better status code and errors to users
+  [#2398](https://github.com/juanfont/headscale/pull/2398)
+- Print headscale version and commit on server startup
+  [#2415](https://github.com/juanfont/headscale/pull/2415)
+
+## 0.24.3 (2025-02-07)
+
+### Changes
+- Fix migration error caused by nodes having invalid auth keys
+  [#2412](https://github.com/juanfont/headscale/pull/2412)
+- Pre auth keys belonging to a user are no longer deleted with the user
+  [#2396](https://github.com/juanfont/headscale/pull/2396)
+- Pre auth keys that are used by a node can no longer be deleted
+  [#2396](https://github.com/juanfont/headscale/pull/2396)
+
+## 0.24.2 (2025-01-30)
+
+### Changes
+
+- Fix issue where email and username being equal fails to match in Policy
+  [#2388](https://github.com/juanfont/headscale/pull/2388)
+- Delete invalid routes before adding a NOT NULL constraint on node_id
+  [#2386](https://github.com/juanfont/headscale/pull/2386)
+
+## 0.24.1 (2025-01-23)
+
+### Changes
+
+- Fix migration issue with user table for PostgreSQL
+  [#2367](https://github.com/juanfont/headscale/pull/2367)
+- Relax username validation to allow emails
+  [#2364](https://github.com/juanfont/headscale/pull/2364)
+- Remove invalid routes and add stronger constraints for routes to avoid API
+  panic [#2371](https://github.com/juanfont/headscale/pull/2371)
+- Fix panic when `derp.update_frequency` is 0
+  [#2368](https://github.com/juanfont/headscale/pull/2368)
+
+## 0.24.0 (2025-01-17)
 
 ### Security fix: OIDC changes in Headscale 0.24.0
 
@@ -33,8 +109,7 @@ and have it populate to Headscale automatically the next time they log in.
 However, this may affect the way you reference users in policies.
 
 Headscale v0.23.0 and earlier never recorded the `iss` and `sub` fields, so all
-legacy (existing) OIDC accounts _need to be migrated_ to be properly
-secured.
+legacy (existing) OIDC accounts _need to be migrated_ to be properly secured.
 
 #### What do I need to do to migrate?
 
@@ -46,8 +121,8 @@ The migration will mostly be done automatically, with one exception. If your
 OIDC does not provide an `email_verified` claim, Headscale will ignore the
 `email`. This means that either the administrator will have to mark the user
 emails as verified, or ensure the users verify their emails. Any unverified
-emails will be ignored, meaning that the users will get new accounts instead
-of being migrated.
+emails will be ignored, meaning that the users will get new accounts instead of
+being migrated.
 
 After this exception is ensured, make all users log into Headscale with their
 account, and Headscale will automatically update the account record. This will
@@ -148,7 +223,8 @@ This will also affect the way you
 - User gRPC/API [#2261](https://github.com/juanfont/headscale/pull/2261):
   - If you depend on a Headscale Web UI, you should wait with this update until
     the UI have been updated to match the new API.
-  - `GET /api/v1/user/{name}` and `GetUser` have been removed in favour of `ListUsers` with an ID parameter
+  - `GET /api/v1/user/{name}` and `GetUser` have been removed in favour of
+    `ListUsers` with an ID parameter
   - `RenameUser` and `DeleteUser` now require an ID instead of a name.
 
 ### Changes
@@ -170,9 +246,12 @@ This will also affect the way you
 - CLI for managing users now accepts `--identifier` in addition to `--name`,
   usage of `--identifier` is recommended
   [#2261](https://github.com/juanfont/headscale/pull/2261)
-- Add `dns.extra_records_path` configuration option [#2262](https://github.com/juanfont/headscale/issues/2262)
-- Support client verify for DERP [#2046](https://github.com/juanfont/headscale/pull/2046)
-- Add PKCE Verifier for OIDC [#2314](https://github.com/juanfont/headscale/pull/2314)
+- Add `dns.extra_records_path` configuration option
+  [#2262](https://github.com/juanfont/headscale/issues/2262)
+- Support client verify for DERP
+  [#2046](https://github.com/juanfont/headscale/pull/2046)
+- Add PKCE Verifier for OIDC
+  [#2314](https://github.com/juanfont/headscale/pull/2314)
 
 ## 0.23.0 (2024-09-18)
 
@@ -348,7 +427,7 @@ part of adopting [#1460](https://github.com/juanfont/headscale/pull/1460).
   [#1391](https://github.com/juanfont/headscale/pull/1391)
 - Improvements on Noise implementation
   [#1379](https://github.com/juanfont/headscale/pull/1379)
-- Replace node filter logic, ensuring nodes with access can see eachother
+- Replace node filter logic, ensuring nodes with access can see each other
   [#1381](https://github.com/juanfont/headscale/pull/1381)
 - Disable (or delete) both exit routes at the same time
   [#1428](https://github.com/juanfont/headscale/pull/1428)
@@ -703,8 +782,8 @@ behaviour.
   - All machines can communicate with all machines by default
   - Tags should now work correctly and adding a host to Headscale should now
     reload the rules.
-  - The documentation have a [fictional example](./docs/ref/acls.md) that should cover
-    some use cases of the ACLs features
+  - The documentation have a [fictional example](./docs/ref/acls.md) that should
+    cover some use cases of the ACLs features
 
 ### Features
 
@@ -722,7 +801,8 @@ behaviour.
 
 - Add IPv6 support to the prefix assigned to namespaces
 - Add API Key support
-  - Enable remote control of `headscale` via CLI [docs](./docs/ref/remote-cli.md)
+  - Enable remote control of `headscale` via CLI
+    [docs](./docs/ref/remote-cli.md)
   - Enable HTTP API (beta, subject to change)
 - OpenID Connect users will be mapped per namespaces
   - Each user will get its own namespace, created if it does not exist

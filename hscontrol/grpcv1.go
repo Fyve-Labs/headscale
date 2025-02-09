@@ -181,9 +181,13 @@ func (api headscaleV1APIServer) ExpirePreAuthKey(
 	request *v1.ExpirePreAuthKeyRequest,
 ) (*v1.ExpirePreAuthKeyResponse, error) {
 	err := api.h.db.Write(func(tx *gorm.DB) error {
-		preAuthKey, err := db.GetPreAuthKey(tx, request.GetUser(), request.Key)
+		preAuthKey, err := db.GetPreAuthKey(tx, request.Key)
 		if err != nil {
 			return err
+		}
+
+		if preAuthKey.User.Name != request.GetUser() {
+			return fmt.Errorf("preauth key does not belong to user")
 		}
 
 		return db.ExpirePreAuthKey(tx, preAuthKey)
@@ -227,11 +231,10 @@ func (api headscaleV1APIServer) RegisterNode(
 ) (*v1.RegisterNodeResponse, error) {
 	log.Trace().
 		Str("user", request.GetUser()).
-		Str("machine_key", request.GetKey()).
+		Str("registration_id", request.GetKey()).
 		Msg("Registering node")
 
-	var mkey key.MachinePublic
-	err := mkey.UnmarshalText([]byte(request.GetKey()))
+	registrationId, err := types.RegistrationIDFromString(request.GetKey())
 	if err != nil {
 		return nil, err
 	}
@@ -246,8 +249,8 @@ func (api headscaleV1APIServer) RegisterNode(
 		return nil, fmt.Errorf("looking up user: %w", err)
 	}
 
-	node, err := api.h.db.RegisterNodeFromAuthCallback(
-		mkey,
+	node, _, err := api.h.db.HandleNodeFromAuthPath(
+		registrationId,
 		types.UserID(user.ID),
 		nil,
 		util.RegisterMethodCLI,
@@ -257,9 +260,13 @@ func (api headscaleV1APIServer) RegisterNode(
 		return nil, err
 	}
 
-	err = nodesChangedHook(api.h.db, api.h.polMan, api.h.nodeNotifier)
+	updateSent, err := nodesChangedHook(api.h.db, api.h.polMan, api.h.nodeNotifier)
 	if err != nil {
 		return nil, fmt.Errorf("updating resources using node: %w", err)
+	}
+	if !updateSent {
+		ctx = types.NotifyCtx(context.Background(), "web-node-login", node.Hostname)
+		api.h.nodeNotifier.NotifyAll(ctx, types.UpdatePeerChanged(node.ID))
 	}
 
 	return &v1.RegisterNodeResponse{Node: node.Proto()}, nil
@@ -309,11 +316,7 @@ func (api headscaleV1APIServer) SetTags(
 	}
 
 	ctx = types.NotifyCtx(ctx, "cli-settags", node.Hostname)
-	api.h.nodeNotifier.NotifyWithIgnore(ctx, types.StateUpdate{
-		Type:        types.StatePeerChanged,
-		ChangeNodes: []types.NodeID{node.ID},
-		Message:     "called from api.SetTags",
-	}, node.ID)
+	api.h.nodeNotifier.NotifyWithIgnore(ctx, types.UpdatePeerChanged(node.ID), node.ID)
 
 	log.Trace().
 		Str("node", node.Hostname).
@@ -354,16 +357,10 @@ func (api headscaleV1APIServer) DeleteNode(
 	}
 
 	ctx = types.NotifyCtx(ctx, "cli-deletenode", node.Hostname)
-	api.h.nodeNotifier.NotifyAll(ctx, types.StateUpdate{
-		Type:    types.StatePeerRemoved,
-		Removed: []types.NodeID{node.ID},
-	})
+	api.h.nodeNotifier.NotifyAll(ctx, types.UpdatePeerRemoved(node.ID))
 
 	if changedNodes != nil {
-		api.h.nodeNotifier.NotifyAll(ctx, types.StateUpdate{
-			Type:        types.StatePeerChanged,
-			ChangeNodes: changedNodes,
-		})
+		api.h.nodeNotifier.NotifyAll(ctx, types.UpdatePeerChanged(changedNodes...))
 	}
 
 	return &v1.DeleteNodeResponse{}, nil
@@ -391,14 +388,11 @@ func (api headscaleV1APIServer) ExpireNode(
 	ctx = types.NotifyCtx(ctx, "cli-expirenode-self", node.Hostname)
 	api.h.nodeNotifier.NotifyByNodeID(
 		ctx,
-		types.StateUpdate{
-			Type:        types.StateSelfUpdate,
-			ChangeNodes: []types.NodeID{node.ID},
-		},
+		types.UpdateSelf(node.ID),
 		node.ID)
 
 	ctx = types.NotifyCtx(ctx, "cli-expirenode-peers", node.Hostname)
-	api.h.nodeNotifier.NotifyWithIgnore(ctx, types.StateUpdateExpire(node.ID, now), node.ID)
+	api.h.nodeNotifier.NotifyWithIgnore(ctx, types.UpdateExpire(node.ID, now), node.ID)
 
 	log.Trace().
 		Str("node", node.Hostname).
@@ -429,11 +423,7 @@ func (api headscaleV1APIServer) RenameNode(
 	}
 
 	ctx = types.NotifyCtx(ctx, "cli-renamenode", node.Hostname)
-	api.h.nodeNotifier.NotifyWithIgnore(ctx, types.StateUpdate{
-		Type:        types.StatePeerChanged,
-		ChangeNodes: []types.NodeID{node.ID},
-		Message:     "called from api.RenameNode",
-	}, node.ID)
+	api.h.nodeNotifier.NotifyWithIgnore(ctx, types.UpdatePeerChanged(node.ID), node.ID)
 
 	log.Trace().
 		Str("node", node.Hostname).
@@ -592,10 +582,7 @@ func (api headscaleV1APIServer) DisableRoute(
 
 	if update != nil {
 		ctx := types.NotifyCtx(ctx, "cli-disableroute", "unknown")
-		api.h.nodeNotifier.NotifyAll(ctx, types.StateUpdate{
-			Type:        types.StatePeerChanged,
-			ChangeNodes: update,
-		})
+		api.h.nodeNotifier.NotifyAll(ctx, types.UpdatePeerChanged(update...))
 	}
 
 	return &v1.DisableRouteResponse{}, nil
@@ -634,10 +621,7 @@ func (api headscaleV1APIServer) DeleteRoute(
 
 	if update != nil {
 		ctx := types.NotifyCtx(ctx, "cli-deleteroute", "unknown")
-		api.h.nodeNotifier.NotifyAll(ctx, types.StateUpdate{
-			Type:        types.StatePeerChanged,
-			ChangeNodes: update,
-		})
+		api.h.nodeNotifier.NotifyAll(ctx, types.UpdatePeerChanged(update...))
 	}
 
 	return &v1.DeleteRouteResponse{}, nil
@@ -799,9 +783,7 @@ func (api headscaleV1APIServer) SetPolicy(
 	// Only send update if the packet filter has changed.
 	if changed {
 		ctx := types.NotifyCtx(context.Background(), "acl-update", "na")
-		api.h.nodeNotifier.NotifyAll(ctx, types.StateUpdate{
-			Type: types.StateFullUpdate,
-		})
+		api.h.nodeNotifier.NotifyAll(ctx, types.UpdateFull())
 	}
 
 	response := &v1.SetPolicyResponse{
@@ -839,36 +821,36 @@ func (api headscaleV1APIServer) DebugCreateNode(
 		Hostname:    "DebugTestNode",
 	}
 
-	var mkey key.MachinePublic
-	err = mkey.UnmarshalText([]byte(request.GetKey()))
+	registrationId, err := types.RegistrationIDFromString(request.GetKey())
 	if err != nil {
 		return nil, err
 	}
 
-	nodeKey := key.NewNode()
+	newNode := types.RegisterNode{
+		Node: types.Node{
+			NodeKey:    key.NewNode().Public(),
+			MachineKey: key.NewMachine().Public(),
+			Hostname:   request.GetName(),
+			User:       *user,
 
-	newNode := types.Node{
-		MachineKey: mkey,
-		NodeKey:    nodeKey.Public(),
-		Hostname:   request.GetName(),
-		User:       *user,
+			Expiry:   &time.Time{},
+			LastSeen: &time.Time{},
 
-		Expiry:   &time.Time{},
-		LastSeen: &time.Time{},
-
-		Hostinfo: &hostinfo,
+			Hostinfo: &hostinfo,
+		},
+		Registered: make(chan struct{}),
 	}
 
 	log.Debug().
-		Str("machine_key", mkey.ShortString()).
+		Str("registration_id", registrationId.String()).
 		Msg("adding debug machine via CLI, appending to registration cache")
 
 	api.h.registrationCache.Set(
-		mkey.String(),
+		registrationId,
 		newNode,
 	)
 
-	return &v1.DebugCreateNodeResponse{Node: newNode.Proto()}, nil
+	return &v1.DebugCreateNodeResponse{Node: newNode.Node.Proto()}, nil
 }
 
 func (api headscaleV1APIServer) mustEmbedUnimplementedHeadscaleServiceServer() {}

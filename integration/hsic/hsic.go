@@ -1,17 +1,17 @@
 package hsic
 
 import (
+	"cmp"
 	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log"
-	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"path"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -166,17 +166,6 @@ func WithHostname(hostname string) Option {
 	}
 }
 
-// WithHostnameAsServerURL sets the Headscale ServerURL based on
-// the Hostname.
-func WithHostnameAsServerURL() Option {
-	return func(hsic *HeadscaleInContainer) {
-		hsic.env["HEADSCALE_SERVER_URL"] = fmt.Sprintf("http://%s",
-			net.JoinHostPort(hsic.GetHostname(),
-				fmt.Sprintf("%d", hsic.port)),
-		)
-	}
-}
-
 // WithFileInContainer adds a file to the container at the given path.
 func WithFileInContainer(path string, contents []byte) Option {
 	return func(hsic *HeadscaleInContainer) {
@@ -297,16 +286,6 @@ func New(
 
 	portProto := fmt.Sprintf("%d/tcp", hsic.port)
 
-	serverURL, err := url.Parse(hsic.env["HEADSCALE_SERVER_URL"])
-	if err != nil {
-		return nil, err
-	}
-
-	if len(hsic.tlsCert) != 0 && len(hsic.tlsKey) != 0 {
-		serverURL.Scheme = "https"
-		hsic.env["HEADSCALE_SERVER_URL"] = serverURL.String()
-	}
-
 	headscaleBuildOptions := &dockertest.BuildOptions{
 		Dockerfile: IntegrationTestDockerFileName,
 		ContextDir: dockerContextPath,
@@ -352,6 +331,12 @@ func New(
 		hsic.env["HEADSCALE_TLS_CERT_PATH"] = tlsCertPath
 		hsic.env["HEADSCALE_TLS_KEY_PATH"] = tlsKeyPath
 	}
+
+	// Server URL and Listen Addr should not be overridable outside of
+	// the configuration passed to docker.
+	hsic.env["HEADSCALE_SERVER_URL"] = hsic.GetEndpoint()
+	hsic.env["HEADSCALE_LISTEN_ADDR"] = fmt.Sprintf("0.0.0.0:%d", hsic.port)
+
 	for key, value := range hsic.env {
 		env = append(env, fmt.Sprintf("%s=%s", key, value))
 	}
@@ -381,8 +366,8 @@ func New(
 		}
 	}
 
-	// dockertest isnt very good at handling containers that has already
-	// been created, this is an attempt to make sure this container isnt
+	// dockertest isn't very good at handling containers that has already
+	// been created, this is an attempt to make sure this container isn't
 	// present.
 	err = pool.RemoveContainerByName(hsic.hostname)
 	if err != nil {
@@ -649,7 +634,7 @@ func (t *HeadscaleInContainer) GetHealthEndpoint() string {
 // GetEndpoint returns the Headscale endpoint for the HeadscaleInContainer.
 func (t *HeadscaleInContainer) GetEndpoint() string {
 	hostEndpoint := fmt.Sprintf("%s:%d",
-		t.GetIP(),
+		t.GetHostname(),
 		t.port)
 
 	if t.hasTLS() {
@@ -761,12 +746,58 @@ func (t *HeadscaleInContainer) CreateAuthKey(
 	return &preAuthKey, nil
 }
 
-// ListNodesInUser list the TailscaleClients (Node, Headscale internal representation)
-// associated with a user.
-func (t *HeadscaleInContainer) ListNodesInUser(
-	user string,
+// ListNodes lists the currently registered Nodes in headscale.
+// Optionally a list of usernames can be passed to get users for
+// specific users.
+func (t *HeadscaleInContainer) ListNodes(
+	users ...string,
 ) ([]*v1.Node, error) {
-	command := []string{"headscale", "--user", user, "nodes", "list", "--output", "json"}
+	var ret []*v1.Node
+	execUnmarshal := func(command []string) error {
+		result, _, err := dockertestutil.ExecuteCommand(
+			t.container,
+			command,
+			[]string{},
+		)
+		if err != nil {
+			return fmt.Errorf("failed to execute list node command: %w", err)
+		}
+
+		var nodes []*v1.Node
+		err = json.Unmarshal([]byte(result), &nodes)
+		if err != nil {
+			return fmt.Errorf("failed to unmarshal nodes: %w", err)
+		}
+
+		ret = append(ret, nodes...)
+		return nil
+	}
+
+	if len(users) == 0 {
+		err := execUnmarshal([]string{"headscale", "nodes", "list", "--output", "json"})
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		for _, user := range users {
+			command := []string{"headscale", "--user", user, "nodes", "list", "--output", "json"}
+
+			err := execUnmarshal(command)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	sort.Slice(ret, func(i, j int) bool {
+		return cmp.Compare(ret[i].GetId(), ret[j].GetId()) == -1
+	})
+	return ret, nil
+}
+
+// ListUsers returns a list of users from Headscale.
+func (t *HeadscaleInContainer) ListUsers() ([]*v1.User, error) {
+	command := []string{"headscale", "users", "list", "--output", "json"}
 
 	result, _, err := dockertestutil.ExecuteCommand(
 		t.container,
@@ -777,13 +808,13 @@ func (t *HeadscaleInContainer) ListNodesInUser(
 		return nil, fmt.Errorf("failed to execute list node command: %w", err)
 	}
 
-	var nodes []*v1.Node
-	err = json.Unmarshal([]byte(result), &nodes)
+	var users []*v1.User
+	err = json.Unmarshal([]byte(result), &users)
 	if err != nil {
 		return nil, fmt.Errorf("failed to unmarshal nodes: %w", err)
 	}
 
-	return nodes, nil
+	return users, nil
 }
 
 // WriteFile save file inside the Headscale container.

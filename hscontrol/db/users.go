@@ -24,7 +24,7 @@ func (hsdb *HSDatabase) CreateUser(user types.User) (*types.User, error) {
 // CreateUser creates a new User. Returns error if could not be created
 // or another user already exists.
 func CreateUser(tx *gorm.DB, user types.User) (*types.User, error) {
-	err := util.CheckForFQDNRules(user.Name)
+	err := util.ValidateUsername(user.Name)
 	if err != nil {
 		return nil, err
 	}
@@ -81,6 +81,8 @@ func (hsdb *HSDatabase) RenameUser(uid types.UserID, newName string) error {
 	})
 }
 
+var ErrCannotChangeOIDCUser = errors.New("cannot edit OIDC user")
+
 // RenameUser renames a User. Returns error if the User does
 // not exist or if another User exists with the new name.
 func RenameUser(tx *gorm.DB, uid types.UserID, newName string) error {
@@ -89,9 +91,13 @@ func RenameUser(tx *gorm.DB, uid types.UserID, newName string) error {
 	if err != nil {
 		return err
 	}
-	err = util.CheckForFQDNRules(newName)
+	err = util.ValidateUsername(newName)
 	if err != nil {
 		return err
+	}
+
+	if oldUser.Provider == util.RegisterMethodOIDC {
+		return ErrCannotChangeOIDCUser
 	}
 
 	oldUser.Name = newName

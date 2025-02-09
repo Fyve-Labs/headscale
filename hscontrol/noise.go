@@ -3,15 +3,19 @@ package hscontrol
 import (
 	"encoding/binary"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/key"
 
 	"github.com/gorilla/mux"
+	"github.com/juanfont/headscale/hscontrol/capver"
 	"github.com/juanfont/headscale/hscontrol/types"
 	"github.com/rs/zerolog/log"
 	"golang.org/x/net/http2"
+	"gorm.io/gorm"
 	"tailscale.com/control/controlbase"
 	"tailscale.com/control/controlhttp/controlhttpserver"
 )
@@ -79,9 +83,7 @@ func (h *Headscale) NoiseUpgradeHandler(
 		noiseServer.earlyNoise,
 	)
 	if err != nil {
-		log.Error().Err(err).Msg("noise upgrade failed")
-		http.Error(writer, err.Error(), http.StatusInternalServerError)
-
+		httpError(writer, fmt.Errorf("noise upgrade failed: %w", err))
 		return
 	}
 
@@ -116,18 +118,8 @@ func (h *Headscale) NoiseUpgradeHandler(
 }
 
 func (ns *noiseServer) earlyNoise(protocolVersion int, writer io.Writer) error {
-	log.Trace().
-		Caller().
-		Int("protocol_version", protocolVersion).
-		Str("challenge", ns.challenge.Public().String()).
-		Msg("earlyNoise called")
-
-	if protocolVersion < earlyNoiseCapabilityVersion {
-		log.Trace().
-			Caller().
-			Msgf("protocol version %d does not support early noise", protocolVersion)
-
-		return nil
+	if !isSupportedVersion(tailcfg.CapabilityVersion(protocolVersion)) {
+		return fmt.Errorf("unsupported client version: %d", protocolVersion)
 	}
 
 	earlyJSON, err := json.Marshal(&tailcfg.EarlyNoise{
@@ -159,9 +151,34 @@ func (ns *noiseServer) earlyNoise(protocolVersion int, writer io.Writer) error {
 	return nil
 }
 
-const (
-	MinimumCapVersion tailcfg.CapabilityVersion = 82
-)
+func isSupportedVersion(version tailcfg.CapabilityVersion) bool {
+	return version >= capver.MinSupportedCapabilityVersion
+}
+
+func rejectUnsupported(
+	writer http.ResponseWriter,
+	version tailcfg.CapabilityVersion,
+	mkey key.MachinePublic,
+	nkey key.NodePublic,
+) bool {
+	// Reject unsupported versions
+	if !isSupportedVersion(version) {
+		log.Error().
+			Caller().
+			Int("minimum_cap_ver", int(capver.MinSupportedCapabilityVersion)).
+			Int("client_cap_ver", int(version)).
+			Str("minimum_version", capver.TailscaleVersion(capver.MinSupportedCapabilityVersion)).
+			Str("client_version", capver.TailscaleVersion(version)).
+			Str("node_key", nkey.ShortString()).
+			Str("machine_key", mkey.ShortString()).
+			Msg("unsupported client connected")
+		http.Error(writer, "unsupported client version", http.StatusBadRequest)
+
+		return true
+	}
+
+	return false
+}
 
 // NoisePollNetMapHandler takes care of /machine/:id/map using the Noise protocol
 //
@@ -178,50 +195,26 @@ func (ns *noiseServer) NoisePollNetMapHandler(
 ) {
 	body, _ := io.ReadAll(req.Body)
 
-	mapRequest := tailcfg.MapRequest{}
+	var mapRequest tailcfg.MapRequest
 	if err := json.Unmarshal(body, &mapRequest); err != nil {
-		log.Error().
-			Caller().
-			Err(err).
-			Msg("Cannot parse MapRequest")
-		http.Error(writer, "Internal error", http.StatusInternalServerError)
-
+		httpError(writer, err)
 		return
 	}
 
-	log.Trace().
-		Caller().
-		Str("handler", "NoisePollNetMap").
-		Any("headers", req.Header).
-		Str("node", mapRequest.Hostinfo.Hostname).
-		Int("capver", int(mapRequest.Version)).
-		Msg("PollNetMapHandler called")
-
 	// Reject unsupported versions
-	if mapRequest.Version < MinimumCapVersion {
-		log.Info().
-			Caller().
-			Int("min_version", int(MinimumCapVersion)).
-			Int("client_version", int(mapRequest.Version)).
-			Msg("unsupported client connected")
-		http.Error(writer, "Internal error", http.StatusBadRequest)
-
+	if rejectUnsupported(writer, mapRequest.Version, ns.machineKey, mapRequest.NodeKey) {
 		return
 	}
 
 	ns.nodeKey = mapRequest.NodeKey
 
-	node, err := ns.headscale.db.GetNodeByAnyKey(
-		ns.conn.Peer(),
-		mapRequest.NodeKey,
-		key.NodePublic{},
-	)
+	node, err := ns.headscale.db.GetNodeByNodeKey(mapRequest.NodeKey)
 	if err != nil {
-		log.Error().
-			Str("handler", "NoisePollNetMap").
-			Msgf("Failed to fetch node from the database with node key: %s", mapRequest.NodeKey.String())
-		http.Error(writer, "Internal error", http.StatusInternalServerError)
-
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			httpError(writer, NewHTTPError(http.StatusNotFound, "node not found", nil))
+			return
+		}
+		httpError(writer, err)
 		return
 	}
 
@@ -231,5 +224,66 @@ func (ns *noiseServer) NoisePollNetMapHandler(
 		sess.serve()
 	} else {
 		sess.serveLongPoll()
+	}
+}
+
+// NoiseRegistrationHandler handles the actual registration process of a node.
+func (ns *noiseServer) NoiseRegistrationHandler(
+	writer http.ResponseWriter,
+	req *http.Request,
+) {
+	if req.Method != http.MethodPost {
+		httpError(writer, errMethodNotAllowed)
+
+		return
+	}
+
+	registerRequest, registerResponse, err := func() (*tailcfg.RegisterRequest, []byte, error) {
+		body, err := io.ReadAll(req.Body)
+		if err != nil {
+			return nil, nil, err
+		}
+		var registerRequest tailcfg.RegisterRequest
+		if err := json.Unmarshal(body, &registerRequest); err != nil {
+			return nil, nil, err
+		}
+
+		ns.nodeKey = registerRequest.NodeKey
+
+		resp, err := ns.headscale.handleRegister(req.Context(), registerRequest, ns.conn.Peer())
+		// TODO(kradalby): Here we could have two error types, one that is surfaced to the client
+		// and one that returns 500.
+		if err != nil {
+			return nil, nil, err
+		}
+
+		respBody, err := json.Marshal(resp)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		return &registerRequest, respBody, nil
+	}()
+	if err != nil {
+		log.Error().
+			Caller().
+			Err(err).
+			Msg("Error handling registration")
+		http.Error(writer, "Internal server error", http.StatusInternalServerError)
+	}
+
+	// Reject unsupported versions
+	if rejectUnsupported(writer, registerRequest.Version, ns.machineKey, registerRequest.NodeKey) {
+		return
+	}
+
+	writer.Header().Set("Content-Type", "application/json; charset=utf-8")
+	writer.WriteHeader(http.StatusOK)
+	_, err = writer.Write(registerResponse)
+	if err != nil {
+		log.Error().
+			Caller().
+			Err(err).
+			Msg("Failed to write response")
 	}
 }

@@ -153,7 +153,7 @@ func (n *Notifier) IsConnected(nodeID types.NodeID) bool {
 }
 
 // IsLikelyConnected reports if a node is connected to headscale and has a
-// poll session open, but doesnt lock, so might be wrong.
+// poll session open, but doesn't lock, so might be wrong.
 func (n *Notifier) IsLikelyConnected(nodeID types.NodeID) bool {
 	if val, ok := n.connected.Load(nodeID); ok {
 		return val
@@ -388,19 +388,13 @@ func (b *batcher) flush() {
 		})
 
 		if b.changedNodeIDs.Slice().Len() > 0 {
-			update := types.StateUpdate{
-				Type:        types.StatePeerChanged,
-				ChangeNodes: changedNodes,
-			}
+			update := types.UpdatePeerChanged(changedNodes...)
 
 			b.n.sendAll(update)
 		}
 
 		if len(patches) > 0 {
-			patchUpdate := types.StateUpdate{
-				Type:          types.StatePeerChangedPatch,
-				ChangePatches: patches,
-			}
+			patchUpdate := types.UpdatePeerPatch(patches...)
 
 			b.n.sendAll(patchUpdate)
 		}

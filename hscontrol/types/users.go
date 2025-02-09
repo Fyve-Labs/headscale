@@ -10,6 +10,7 @@ import (
 
 	v1 "github.com/juanfont/headscale/gen/go/headscale/v1"
 	"github.com/juanfont/headscale/hscontrol/util"
+	"github.com/rs/zerolog/log"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"gorm.io/gorm"
 	"tailscale.com/tailcfg"
@@ -28,8 +29,9 @@ type User struct {
 	// you can have multiple users with the same name in OIDC,
 	// but not if you only run with CLI users.
 
-	// Username for the user, is used if email is empty
+	// Name (username) for the user, is used if email is empty
 	// Should not be used, please use Username().
+	// It is unique if ProviderIdentifier is not set.
 	Name string
 
 	// Typically the full name of the user
@@ -39,9 +41,11 @@ type User struct {
 	// Should not be used, please use Username().
 	Email string
 
-	// Unique identifier of the user from OIDC,
-	// comes from `sub` claim in the OIDC token
-	// and is used to lookup the user.
+	// ProviderIdentifier is a unique or not set identifier of the
+	// user from OIDC. It is the combination of `iss`
+	// and `sub` claim in the OIDC token.
+	// It is unique if set.
+	// It is unique together with Name.
 	ProviderIdentifier sql.NullString
 
 	// Provider is the origin of the user account,
@@ -76,10 +80,8 @@ func (u *User) profilePicURL() string {
 func (u *User) TailscaleUser() *tailcfg.User {
 	user := tailcfg.User{
 		ID:            tailcfg.UserID(u.ID),
-		LoginName:     u.Username(),
 		DisplayName:   u.DisplayNameOrUsername(),
 		ProfilePicURL: u.profilePicURL(),
-		Logins:        []tailcfg.LoginID{},
 		Created:       u.CreatedAt,
 	}
 
@@ -173,9 +175,11 @@ func (c *OIDCClaims) Identifier() string {
 // FromClaim overrides a User from OIDC claims.
 // All fields will be updated, except for the ID.
 func (u *User) FromClaim(claims *OIDCClaims) {
-	err := util.CheckForFQDNRules(claims.Username)
+	err := util.ValidateUsername(claims.Username)
 	if err == nil {
 		u.Name = claims.Username
+	} else {
+		log.Debug().Err(err).Msgf("Username %s is not valid", claims.Username)
 	}
 
 	if claims.EmailVerified {

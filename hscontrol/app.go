@@ -24,6 +24,7 @@ import (
 	grpcRuntime "github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
 	"github.com/juanfont/headscale"
 	v1 "github.com/juanfont/headscale/gen/go/headscale/v1"
+	"github.com/juanfont/headscale/hscontrol/capver"
 	"github.com/juanfont/headscale/hscontrol/db"
 	"github.com/juanfont/headscale/hscontrol/derp"
 	derpServer "github.com/juanfont/headscale/hscontrol/derp/server"
@@ -96,7 +97,7 @@ type Headscale struct {
 	mapper       *mapper.Mapper
 	nodeNotifier *notifier.Notifier
 
-	registrationCache *zcache.Cache[string, types.Node]
+	registrationCache *zcache.Cache[types.RegistrationID, types.RegisterNode]
 
 	authProvider AuthProvider
 
@@ -123,7 +124,7 @@ func NewHeadscale(cfg *types.Config) (*Headscale, error) {
 		return nil, fmt.Errorf("failed to read or create Noise protocol private key: %w", err)
 	}
 
-	registrationCache := zcache.New[string, types.Node](
+	registrationCache := zcache.New[types.RegistrationID, types.RegisterNode](
 		registerCacheExpiration,
 		registerCacheCleanup,
 	)
@@ -245,11 +246,11 @@ func (h *Headscale) scheduledTasks(ctx context.Context) {
 
 	lastExpiryCheck := time.Unix(0, 0)
 
-	derpTicker := time.NewTicker(h.cfg.DERP.UpdateFrequency)
-	defer derpTicker.Stop()
-	// If we dont want auto update, just stop the ticker
-	if !h.cfg.DERP.AutoUpdate {
-		derpTicker.Stop()
+	derpTickerChan := make(<-chan time.Time)
+	if h.cfg.DERP.AutoUpdate && h.cfg.DERP.UpdateFrequency != 0 {
+		derpTicker := time.NewTicker(h.cfg.DERP.UpdateFrequency)
+		defer derpTicker.Stop()
+		derpTickerChan = derpTicker.C
 	}
 
 	var extraRecordsUpdate <-chan []tailcfg.DNSRecord
@@ -285,7 +286,7 @@ func (h *Headscale) scheduledTasks(ctx context.Context) {
 				h.nodeNotifier.NotifyAll(ctx, update)
 			}
 
-		case <-derpTicker.C:
+		case <-derpTickerChan:
 			log.Info().Msg("Fetching DERPMap updates")
 			h.DERPMap = derp.GetDERPMap(h.cfg.DERP)
 			if h.cfg.DERP.ServerEnabled && h.cfg.DERP.AutomaticallyAddEmbeddedDerpRegion {
@@ -306,11 +307,9 @@ func (h *Headscale) scheduledTasks(ctx context.Context) {
 			h.cfg.TailcfgDNSConfig.ExtraRecords = records
 
 			ctx := types.NotifyCtx(context.Background(), "dns-extrarecord", "all")
-			h.nodeNotifier.NotifyAll(ctx, types.StateUpdate{
-				// TODO(kradalby): We can probably do better than sending a full update here,
-				// but for now this will ensure that all of the nodes get the new records.
-				Type: types.StateFullUpdate,
-			})
+			// TODO(kradalby): We can probably do better than sending a full update here,
+			// but for now this will ensure that all of the nodes get the new records.
+			h.nodeNotifier.NotifyAll(ctx, types.UpdateFull())
 		}
 	}
 }
@@ -462,7 +461,7 @@ func (h *Headscale) createRouter(grpcMux *grpcRuntime.ServeMux) *mux.Router {
 
 	router.HandleFunc("/health", h.HealthHandler).Methods(http.MethodGet)
 	router.HandleFunc("/key", h.KeyHandler).Methods(http.MethodGet)
-	router.HandleFunc("/register/{mkey}", h.authProvider.RegisterHandler).Methods(http.MethodGet)
+	router.HandleFunc("/register/{registration_id}", h.authProvider.RegisterHandler).Methods(http.MethodGet)
 
 	if provider, ok := h.authProvider.(*AuthProviderOIDC); ok {
 		router.HandleFunc("/oidc/callback", provider.OIDCCallbackHandler).Methods(http.MethodGet)
@@ -510,9 +509,7 @@ func usersChangedHook(db *db.HSDatabase, polMan policy.PolicyManager, notif *not
 
 	if changed {
 		ctx := types.NotifyCtx(context.Background(), "acl-users-change", "all")
-		notif.NotifyAll(ctx, types.StateUpdate{
-			Type: types.StateFullUpdate,
-		})
+		notif.NotifyAll(ctx, types.UpdateFull())
 	}
 
 	return nil
@@ -520,29 +517,32 @@ func usersChangedHook(db *db.HSDatabase, polMan policy.PolicyManager, notif *not
 
 // TODO(kradalby): Do a variant of this, and polman which only updates the node that has changed.
 // Maybe we should attempt a new in memory state and not go via the DB?
-func nodesChangedHook(db *db.HSDatabase, polMan policy.PolicyManager, notif *notifier.Notifier) error {
+// A bool is returned indicating if a full update was sent to all nodes
+func nodesChangedHook(db *db.HSDatabase, polMan policy.PolicyManager, notif *notifier.Notifier) (bool, error) {
 	nodes, err := db.ListNodes()
 	if err != nil {
-		return err
+		return false, err
 	}
 
-	changed, err := polMan.SetNodes(nodes)
+	filterChanged, err := polMan.SetNodes(nodes)
 	if err != nil {
-		return err
+		return false, err
 	}
 
-	if changed {
+	if filterChanged {
 		ctx := types.NotifyCtx(context.Background(), "acl-nodes-change", "all")
-		notif.NotifyAll(ctx, types.StateUpdate{
-			Type: types.StateFullUpdate,
-		})
+		notif.NotifyAll(ctx, types.UpdateFull())
+
+		return true, nil
 	}
 
-	return nil
+	return false, nil
 }
 
 // Serve launches the HTTP and gRPC server service Headscale and the API.
 func (h *Headscale) Serve() error {
+	capver.CanOldCodeBeCleanedUp()
+
 	if profilingEnabled {
 		if profilingPath != "" {
 			err := os.MkdirAll(profilingPath, os.ModePerm)
@@ -559,6 +559,11 @@ func (h *Headscale) Serve() error {
 	if dumpConfig {
 		spew.Dump(h.cfg)
 	}
+
+	log.Info().Str("version", types.Version).Str("commit", types.GitCommitHash).Msg("Starting Headscale")
+	log.Info().
+		Str("minimum_version", capver.TailscaleVersion(capver.MinSupportedCapabilityVersion)).
+		Msg("Clients with a lower minimum version will be rejected")
 
 	// Fetch an initial DERP Map before we start serving
 	h.DERPMap = derp.GetDERPMap(h.cfg.DERP)
@@ -861,9 +866,7 @@ func (h *Headscale) Serve() error {
 						Msg("ACL policy successfully reloaded, notifying nodes of change")
 
 					ctx := types.NotifyCtx(context.Background(), "acl-sighup", "na")
-					h.nodeNotifier.NotifyAll(ctx, types.StateUpdate{
-						Type: types.StateFullUpdate,
-					})
+					h.nodeNotifier.NotifyAll(ctx, types.UpdateFull())
 				}
 			default:
 				info := func(msg string) { log.Info().Msg(msg) }
