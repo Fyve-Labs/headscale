@@ -43,7 +43,7 @@ func (ns *noiseServer) NoiseSetDnsHandler(
 
 	ctx := req.Context()
 	domain := viper.GetString("dns.base_domain")
-	zone := domain + "."
+	zone := domain
 	var provider interface {
 		libdns.RecordGetter
 		libdns.RecordAppender
