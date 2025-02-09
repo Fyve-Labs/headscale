@@ -44,25 +44,29 @@ func (ns *noiseServer) NoiseSetDnsHandler(
 	ctx := req.Context()
 	domain := viper.GetString("dns.base_domain")
 	zone := domain + "."
-	var provider interface{}
+	var provider interface {
+		libdns.RecordGetter
+		libdns.RecordAppender
+	}
+
 	if viper.GetString("duckdns.api_token") != "" {
-		provider = duckdns.Provider{APIToken: viper.GetString("duckdns.api_token")}
+		provider = &duckdns.Provider{APIToken: viper.GetString("duckdns.api_token")}
 	}
 
 	if viper.GetString("cloudflare.api_token") != "" {
-		provider = cloudflare.Provider{APIToken: viper.GetString("cloudflare.api_token")}
+		provider = &cloudflare.Provider{APIToken: viper.GetString("cloudflare.api_token")}
 	}
 
 	if provider == nil {
 		log.Error().
 			Caller().
-			Msg("no libdns provider setup")
+			Msg("no dns provider setup")
 		http.Error(writer, "Internal error", http.StatusInternalServerError)
 		return
 	}
 
 	// list records
-	recs, err := libdnsGetRecords(provider, ctx, zone)
+	recs, err := provider.GetRecords(ctx, zone)
 	if err != nil {
 		log.Error().
 			Caller().
@@ -86,7 +90,7 @@ func (ns *noiseServer) NoiseSetDnsHandler(
 	}
 
 	if !hasSet {
-		newRecs, err := libdnsAppendRecords(provider, ctx, zone, []libdns.Record{
+		newRecs, err := provider.AppendRecords(ctx, zone, []libdns.Record{
 			{
 				Type:  setDnsRequest.Type,
 				Name:  setDnsRequest.Name,
