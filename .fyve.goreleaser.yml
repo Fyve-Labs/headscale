@@ -15,7 +15,6 @@ builds:
     env:
       - CGO_ENABLED=0
     targets:
-      - darwin_arm64
       - linux_amd64
     flags:
       - -mod=readonly
