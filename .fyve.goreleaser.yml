@@ -1,0 +1,67 @@
+---
+version: 2
+before:
+  hooks:
+    - go mod tidy -compat=1.22
+    - go mod vendor
+
+release:
+  prerelease: auto
+
+builds:
+  - id: headscale
+    main: ./cmd/headscale
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    env:
+      - CGO_ENABLED=0
+    targets:
+      - linux_amd64
+    flags:
+      - -mod=readonly
+    ldflags:
+      - -s -w -X github.com/juanfont/headscale/cmd/headscale/cli.Version=v{{.Version}}
+    tags:
+      - ts2019
+
+archives:
+  - id: golang-cross
+    name_template: '{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}{{ with .Arm }}v{{ . }}{{ end }}{{ with .Mips }}_{{ . }}{{ end }}{{ if not (eq .Amd64 "v1") }}{{ .Amd64 }}{{ end }}'
+    format: binary
+
+source:
+  enabled: true
+  name_template: "{{ .ProjectName }}_{{ .Version }}"
+  format: tar.gz
+  files:
+    - "vendor/"
+
+kos:
+  - id: ghcr
+    repository: ghcr.io/fyve-labs/headscale
+
+    # bare tells KO to only use the repository
+    # for tagging and naming the container.
+    bare: true
+    base_image: gcr.io/distroless/base-debian12
+    build: headscale
+    main: ./cmd/headscale
+    env:
+      - CGO_ENABLED=0
+    platforms:
+      - linux/amd64
+    tags:
+      - "{{ .Tag }}"
+      - "{{ if not .Prerelease }}latest{{ end }}"
+      - "sha-{{ .ShortCommit }}"
+
+
+checksum:
+  name_template: "checksums.txt"
+snapshot:
+  version_template: "{{ .Tag }}-next"
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"

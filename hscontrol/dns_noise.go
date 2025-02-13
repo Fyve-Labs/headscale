@@ -1,9 +1,7 @@
 package hscontrol
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"github.com/libdns/cloudflare"
 	"github.com/libdns/duckdns"
@@ -12,8 +10,20 @@ import (
 	"github.com/spf13/viper"
 	"io"
 	"net/http"
+	"strings"
 	"tailscale.com/tailcfg"
+	"time"
 )
+
+var dnsProvider interface {
+	libdns.RecordGetter
+	libdns.RecordAppender
+	libdns.RecordSetter
+}
+
+func init() {
+	viper.SetDefault("acme.dns.propagation_timeout", "10s")
+}
 
 func (ns *noiseServer) NoiseSetDnsHandler(
 	writer http.ResponseWriter,
@@ -42,79 +52,92 @@ func (ns *noiseServer) NoiseSetDnsHandler(
 		Msg("SetDNSHandler called")
 
 	ctx := req.Context()
-	domain := viper.GetString("dns.base_domain")
-	zone := domain
-	var provider interface {
-		libdns.RecordGetter
-		libdns.RecordAppender
-	}
+	baseDomain := viper.GetString("dns.base_domain")
+	dnsZone := subdomainToDomain(baseDomain)
 
-	if viper.GetString("duckdns.api_token") != "" {
-		provider = &duckdns.Provider{APIToken: viper.GetString("duckdns.api_token")}
-	}
-
-	if viper.GetString("cloudflare.api_token") != "" {
-		provider = &cloudflare.Provider{APIToken: viper.GetString("cloudflare.api_token")}
-	}
-
-	if provider == nil {
+	apiToken := viper.GetString("acme.dns.api_token")
+	if apiToken == "" {
 		log.Error().
 			Caller().
-			Msg("no dns provider setup")
-		http.Error(writer, "Internal error", http.StatusInternalServerError)
-		return
-	}
-
-	// list records
-	recs, err := provider.GetRecords(ctx, zone)
-	if err != nil {
-		log.Error().
-			Caller().
-			Err(err).
-			Msg("Could not retrieve dns records for: " + domain)
+			Msg("Missing HEADSCALE_ACME_DNS_API_TOKEN")
 		http.Error(writer, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
-	var hasSet = false
-	for _, re := range recs {
-		if re.Value == setDnsRequest.Value {
-			hasSet = true
-		}
-
-		if re.Name == setDnsRequest.Name {
-			hasSet = true
-		}
-
-		log.Info().Msg(fmt.Sprintf("%s %s %s", re.Type, re.Name, re.Value))
+	if strings.HasSuffix(baseDomain, "duckdns.org") {
+		dnsZone = baseDomain
+		dnsProvider = &duckdns.Provider{APIToken: apiToken}
+	} else {
+		dnsProvider = &cloudflare.Provider{APIToken: apiToken}
 	}
 
-	if !hasSet {
-		newRecs, err := provider.AppendRecords(ctx, zone, []libdns.Record{
+	// list records
+	recs, err := dnsProvider.GetRecords(ctx, dnsZone)
+	if err != nil {
+		log.Error().
+			Caller().
+			Err(err).
+			Msg("Could not retrieve dns records for zone: " + baseDomain)
+		http.Error(writer, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	var existingRecord *libdns.Record
+	relativeName := libdns.RelativeName(setDnsRequest.Name, dnsZone)
+
+	for _, re := range recs {
+		if re.Name == relativeName {
+			existingRecord = &re
+		}
+
+		//log.Info().Msg(fmt.Sprintf("%s %s", re.Type, re.Name))
+	}
+
+	if existingRecord != nil {
+		log.Info().Msg(fmt.Sprintf("TXT record already existed, updating: %s", setDnsRequest.Name))
+		existingRecord.Value = setDnsRequest.Value
+		setRecs, err := dnsProvider.SetRecords(ctx, dnsZone, []libdns.Record{*existingRecord})
+		if err != nil {
+			log.Error().
+				Caller().
+				Err(err).
+				Msg("Update TXT record error")
+			http.Error(writer, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+		for _, re := range setRecs {
+			log.Info().Msg(fmt.Sprintf("Did updated: %s -> %s", re.Name, re.Value))
+		}
+	} else {
+		newRecs, err := dnsProvider.AppendRecords(ctx, dnsZone, []libdns.Record{
 			{
 				Type:  setDnsRequest.Type,
 				Name:  setDnsRequest.Name,
 				Value: setDnsRequest.Value,
 			},
 		})
-
 		if err != nil {
 			log.Error().
 				Caller().
 				Err(err).
-				Msg("Can not set dns records")
+				Msg("Add TXT record error")
 			http.Error(writer, "Internal server error", http.StatusInternalServerError)
 			return
 		}
 
 		for _, re := range newRecs {
-			log.Info().Msg(fmt.Sprintf("New %s record set: %s", re.Type, re.Name))
+			log.Info().Msg(fmt.Sprintf("Added TXT record %s, Value %s", re.Name, re.Value))
 		}
 	}
+
+	// Give Cloudflare enough time for dns propagation
+	propagationTimeout := viper.GetDuration("acme.dns.propagation_timeout")
+	time.Sleep(propagationTimeout)
 
 	resp := tailcfg.SetDNSResponse{}
 	respBody, _ := json.Marshal(resp)
 	writer.Header().Set("Content-Type", "application/json; charset=utf-8")
+	writer.WriteHeader(200)
 	_, err = writer.Write(respBody)
 	if err != nil {
 		log.Error().
@@ -124,18 +147,12 @@ func (ns *noiseServer) NoiseSetDnsHandler(
 	}
 }
 
-func libdnsGetRecords(provider interface{}, ctx context.Context, zone string) ([]libdns.Record, error) {
-	if p, ok := provider.(libdns.RecordGetter); ok {
-		return p.GetRecords(ctx, zone)
+func subdomainToDomain(subdomain string) string {
+	split := strings.Split(subdomain, ".")
+	if len(split) > 2 {
+		zoneParts := split[len(split)-2:]
+		return strings.Join(zoneParts, ".")
 	}
 
-	return nil, errors.New("invalid libdns provider")
-}
-
-func libdnsAppendRecords(provider interface{}, ctx context.Context, zone string, recs []libdns.Record) ([]libdns.Record, error) {
-	if p, ok := provider.(libdns.RecordAppender); ok {
-		return p.AppendRecords(ctx, zone, recs)
-	}
-
-	return nil, errors.New("invalid libdns provider")
+	return subdomain
 }

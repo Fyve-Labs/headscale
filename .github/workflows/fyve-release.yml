@@ -1,0 +1,32 @@
+---
+name: Fyve release
+
+on:
+  push:
+    tags:
+      - "*" # triggers only if push new tag version
+#    branches:
+#      - fyve-updates
+  workflow_dispatch:
+
+jobs:
+  goreleaser:
+    if: github.repository == 'Fyve-Labs/headscale'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run goreleaser
+        run: goreleaser release --config .fyve.goreleaser.yml --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
