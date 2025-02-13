@@ -277,23 +277,21 @@ dns:
   # List of DNS servers to expose to clients.
   nameservers:
     global:
-      - https://dns.nextdns.io/bd51ac
-#      - 1.1.1.1
-#      - 1.0.0.1
-#      - 2606:4700:4700::1111
-#      - 2606:4700:4700::1001
+      - 1.1.1.1
+      - 1.0.0.1
+      - 2606:4700:4700::1111
+      - 2606:4700:4700::1001
 
       # NextDNS (see https://tailscale.com/kb/1218/nextdns/).
       # "abc123" is example NextDNS ID, replace with yours.
-      # - https://dns.nextdns.io/bd51ac
+      # - https://dns.nextdns.io/abc123
 
     # Split DNS (see https://tailscale.com/kb/1054/dns/),
     # a map of domains and which DNS server to use for each.
     split:
-#      {}
-       phamviet.net:
-         - 45.90.28.210
-         - 45.90.30.210
+      {}
+      # foo.bar.com:
+      #   - 1.1.1.1
       # darp.headscale.net:
       #   - 1.1.1.1
       #   - 8.8.8.8
@@ -306,9 +304,9 @@ dns:
   # so far only A and AAAA records are supported (on the tailscale side)
   # See: docs/ref/dns.md
   extra_records: []
-#   - name: localhost
-#     type: "A"
-#     value: 127.0.0.1
+  #   - name: "grafana.myvpn.example.com"
+  #     type: "A"
+  #     value: "100.64.0.3"
   #
   #   # you can also put it in one line
   #   - { name: "prometheus.myvpn.example.com", type: "A", value: "100.64.0.3" }
